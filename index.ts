@@ -1,8 +1,6 @@
 import axios, {AxiosInstance} from "axios";
-import {readFileSync} from "fs";
-require('dotenv').config()
 
-const https = require("https");
+const cheerio = require("cheerio");
 const axiosCookieJarSupport = require("axios-cookiejar-support").default;
 const tough = require("tough-cookie");
 axiosCookieJarSupport(axios);
@@ -22,17 +20,9 @@ enum REGION {
 }
 
 export default class Fetcher {
-    SERVER_ENV = "lp1";
-    DEVICE_ID = "DEVUNIT000072992";
-    FIRMWARE_VERSION = "11.0.1-2";
-    PLATFORM = "NX";
-
-    CERT_PATH = "./nx_tls_client_cert.pem";
-    SHOP_CERT_PATH = "./libAppletShop.p12";
-    SHOP_CERT_PASSWORD = "kei8paraeS";
-    BASE_URL = "https://bugyo.hac.lp1.eshop.nintendo.net/shogun/v1/titles/";
-
-    session: AxiosInstance;
+    CONVERT_URL = "https://ec.nintendo.com/apps/";
+    GRAPH_URL = "https://graph.nintendo.com/";
+    client: AxiosInstance;
     region: REGION;
 
     constructor(region: string = "US") {
@@ -42,42 +32,79 @@ export default class Fetcher {
     }
 
     initSession = () => {
-        const httpsAgent = new https.Agent({
-            // cert: readFileSync(this.CERT_PATH),
-            // pem: readFileSync(this.CERT_PATH),
-            pfx: readFileSync(this.SHOP_CERT_PATH),
-            passphrase: this.SHOP_CERT_PASSWORD,
-            rejectUnauthorized: false,
-        });
-
-        this.session = axios.create({httpsAgent, jar: cookieJar} as any);
-        // this.session.defaults.headers.common[
-        //     "User-Agent"
-        //     ] = `NintendoSDK Firmware/${this.FIRMWARE_VERSION} (platform:${this.PLATFORM}; did:${this.DEVICE_ID}; eid:${this.SERVER_ENV})`;
-        this.session.defaults.headers.common = {
-            "X-DeviceAuthorization": `Bearer ${readFileSync(`./auth/device_auth_token.txt`)}`,
+        this.client = axios.create({jar: cookieJar} as any);
+        this.client.defaults.headers.common = {
             "Accept": "*/*",
         };
     };
 
-    refreshToken = async () => {
-
+    query = async (query, variables) => {
+        return await this.client.post(this.GRAPH_URL,
+            JSON.stringify({
+                query,
+                variables,
+            }),
+        );
     };
 
-    fetch = async (titleId: string) => {
-        const url = this.BASE_URL + `${titleId}?shop_id=3&lang=en&country=${this.region}`;
+    fetchNsuid = async (titleId: string) => {
+        const url = this.CONVERT_URL + `${titleId}/${this.region}`;
+        const response = await this.client.get(url);
+        const redirectLocation = response.request.res.req.path;
+        const id = redirectLocation.match(/\d{14}/gm)[0];
+        const searchParams = new URLSearchParams(redirectLocation.replace(/.*\?/gm, ""));
+        if (!id) throw new Error(`Not a valid NSUID in: ${redirectLocation}`);
+
+        // For future updates in regions read this: https://www.nintendo.com/pos-redirect/70010000012133?a=gdp&c=US
+        let language = searchParams.get("l");
+        let country = searchParams.get("c");
+        language = language && language.toLowerCase() || "en";
+        country = country && country.toUpperCase() || "US";
+
+        if (language === "es") {
+            country = "LA";
+        }
+
+        return {nsuid: id, locale: `${language}-${country}`};
+    };
+
+    fetchAll = async (titleId: string) => {
+        const {nsuid, locale} = await this.fetchNsuid(titleId);
         try {
-            const response = await this.session.get(url);
-            return response;
+            const response = await this.query(`
+                query GetGameByNsuid($nsuid: String!, $locale: String) {
+                    GetGameByNsuid(nsuid: $nsuid, locale: $locale) {
+                        horizontalHeaderImage
+                        descriptionImage
+                        boxart
+                        galleryImages
+                    }
+                }`,
+                {nsuid, locale},
+            );
+            return response?.data?.data?.GetGameByNsuid;
         } catch (e) {
             console.error(e);
-            console.log(e.response.data);
-            if (e.response.status === 403) {
-                console.info("Oops! The DAuth is invalid. Refreshing it now...");
-                // throw new Error("Oops! The DAuth is invalid. Please refresh it.")
-                // TODO: Refresh token here //
-            } else return null;
         }
     };
 
+    fetchHeaderImage = async (titleId: string) => {
+        const data = await this.fetchAll(titleId);
+        return data?.horizontalHeaderImage;
+    };
+
+    fetchDescriptionImage = async (titleId: string) => {
+        const data = await this.fetchAll(titleId);
+        return data?.descriptionImage;
+    };
+
+    fetchBoxart = async (titleId: string) => {
+        const data = await this.fetchAll(titleId);
+        return data?.boxart;
+    };
+
+    fetchScreenshots = async (titleId: string) => {
+        const data = await this.fetchAll(titleId);
+        return data?.galleryImages;
+    };
 }

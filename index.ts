@@ -9,14 +9,47 @@ const cookieJar = new tough.CookieJar();
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = null;
 
 enum REGION {
+    // Americas
     US = "US",
-    GB = "GB",
+    CA = "CA",
+    LA = "LA",
+    BR = "BR",
+    CO = "CO",
+    AR = "AR",
+    CL = "CL",
+    PE = "PE",
+
+    // Asia Pacific
     JP = "JP",
-    AU = "AU",
-    TW = "TW",
     KR = "KR",
-    // CN = "CN",?
-    // EU = "EU",?
+    CN = "CN",
+    TW = "TW",
+    HK = "HK",
+    AU = "AU",
+    NZ = "NZ",
+
+    // Europe, Middle East & Africa
+    AT = "AT",
+    BE = "BE",
+    CZ = "CZ",
+    DK = "DK",
+    DE = "DE",
+    ES = "ES",
+    FI = "FI",
+    FR = "FR",
+    HU = "HU",
+    IL = "IL",
+    IT = "IT",
+    NL = "NL",
+    NO = "NO",
+    SK = "SK",
+    PL = "PL",
+    PT = "PT",
+    RU = "RU",
+    ZA = "ZA",
+    SE = "SE",
+    CH = "CH",
+    GB = "GB",
 }
 
 export default class Fetcher {
@@ -49,62 +82,98 @@ export default class Fetcher {
 
     fetchNsuid = async (titleId: string) => {
         const url = this.CONVERT_URL + `${titleId}/${this.region}`;
-        const response = await this.client.get(url);
-        const redirectLocation = response.request.res.req.path;
-        const id = redirectLocation.match(/\d{14}/gm)[0];
-        const searchParams = new URLSearchParams(redirectLocation.replace(/.*\?/gm, ""));
-        if (!id) throw new Error(`Not a valid NSUID in: ${redirectLocation}`);
-
-        // For future updates in regions read this: https://www.nintendo.com/pos-redirect/70010000012133?a=gdp&c=US
-        let language = searchParams.get("l");
-        let country = searchParams.get("c");
-        language = language && language.toLowerCase() || "en";
-        country = country && country.toUpperCase() || "US";
-
-        if (language === "es") {
-            country = "LA";
+        let response = null;
+        try {
+            response = await this.client.get(url);
+        } catch (e) {
+            throw new Error("Title not found");
         }
+        const redirectLocation = response.request.res.req.path;
+        const nsuid = redirectLocation.match(/\d{14}/gm)[0];
+        const searchParams = new URLSearchParams(redirectLocation.replace(/.*\?/gm, ""));
 
-        return {nsuid: id, locale: `${language}-${country}`};
+        if (nsuid) {
+            // For future updates in regions read this: https://www.nintendo.com/pos-redirect/70010000012133?a=gdp&c=US
+            let language = searchParams.get("l");
+            let country = searchParams.get("c");
+            language = language && language.toLowerCase() || "en";
+            country = country && country.toUpperCase() || "US";
+
+            if (language === "es") {
+                country = "LA";
+            }
+
+            return {nsuid, locale: `${language}-${country}`};
+        } else {
+            console.error(`Not a valid NSUID in: ${redirectLocation}`);
+        }
+    };
+
+    fetchHtml = async (titleId: string) => {
+        const url = this.CONVERT_URL + `${titleId}/${this.region}`;
+        let response = null;
+        try {
+            response = await this.client.get(url);
+        } catch (e) {
+            console.log(e)
+            throw new Error("Title not found");
+        }
+        return cheerio.load(response.data);
     };
 
     fetchAll = async (titleId: string) => {
-        const {nsuid, locale} = await this.fetchNsuid(titleId);
         try {
-            const response = await this.query(`
-                query GetGameByNsuid($nsuid: String!, $locale: String) {
-                    GetGameByNsuid(nsuid: $nsuid, locale: $locale) {
-                        horizontalHeaderImage
-                        descriptionImage
-                        boxart
-                        galleryImages
-                    }
-                }`,
-                {nsuid, locale},
-            );
-            return response?.data?.data?.GetGameByNsuid;
+            if (this.region === REGION.US) {
+                // Query Nintendo's official GraphQL API
+                const {nsuid, locale} = await this.fetchNsuid(titleId);
+                const response = await this.query(`
+                    query GetGameByNsuid($nsuid: String!, $locale: String) {
+                        GetGameByNsuid(nsuid: $nsuid, locale: $locale) {
+                            horizontalHeaderImage
+                            descriptionImage
+                            boxart
+                            galleryImages
+                        }
+                    }`,
+                    {nsuid, locale},
+                );
+                const game = response?.data?.data?.GetGameByNsuid;
+                return {
+                    horizontalHeaderImage: game?.horizontalHeaderImage,
+                    descriptionImage: game?.descriptionImage,
+                    boxart: game?.boxart,
+                    galleryImages: game?.galleryImages,
+                };
+            } else {
+                // Get the page's 'twitter:image' meta tag
+                const $ = await this.fetchHtml(titleId);
+                const horizontalHeaderImage = $("meta[property='og:image']").attr("content");
+                return {
+                    horizontalHeaderImage: horizontalHeaderImage,
+                };
+            }
         } catch (e) {
             console.error(e);
         }
     };
 
     fetchHeaderImage = async (titleId: string) => {
-        const data = await this.fetchAll(titleId);
-        return data?.horizontalHeaderImage;
+        const {horizontalHeaderImage} = await this.fetchAll(titleId);
+        return horizontalHeaderImage;
     };
 
     fetchDescriptionImage = async (titleId: string) => {
-        const data = await this.fetchAll(titleId);
-        return data?.descriptionImage;
+        const {descriptionImage} = await this.fetchAll(titleId);
+        return descriptionImage;
     };
 
     fetchBoxart = async (titleId: string) => {
-        const data = await this.fetchAll(titleId);
-        return data?.boxart;
+        const {boxart} = await this.fetchAll(titleId);
+        return boxart;
     };
 
     fetchScreenshots = async (titleId: string) => {
-        const data = await this.fetchAll(titleId);
-        return data?.galleryImages;
+        const {galleryImages} = await this.fetchAll(titleId);
+        return galleryImages;
     };
 }

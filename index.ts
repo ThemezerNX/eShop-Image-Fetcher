@@ -12,7 +12,7 @@ enum REGION {
     // Americas
     US = "US",
     CA = "CA",
-    LA = "LA",
+    // LA = "LA",
     BR = "BR",
     CO = "CO",
     AR = "AR",
@@ -52,6 +52,17 @@ enum REGION {
     GB = "GB",
 }
 
+const graphQLRegions = [
+    REGION.US,
+    REGION.CA,
+    REGION.BR,
+    REGION.CO,
+    REGION.AR,
+    REGION.CL,
+    REGION.PE,
+];
+
+
 export default class Fetcher {
     CONVERT_URL = "https://ec.nintendo.com/apps/";
     GRAPH_URL = "https://graph.nintendo.com/";
@@ -80,8 +91,8 @@ export default class Fetcher {
         );
     };
 
-    fetchNsuid = async (titleId: string) => {
-        const url = this.CONVERT_URL + `${titleId}/${this.region}`;
+    fetchNsuid = async (titleId: string, region: string) => {
+        const url = this.CONVERT_URL + `${titleId}/${region}`;
         let response = null;
         try {
             response = await this.client.get(url);
@@ -109,24 +120,28 @@ export default class Fetcher {
         }
     };
 
-    fetchHtml = async (titleId: string) => {
-        const url = this.CONVERT_URL + `${titleId}/${this.region}`;
-        let response = null;
+    fetchHtml = async (titleId: string, region: string) => {
+        const url = this.CONVERT_URL + `${titleId}/${region}`;
         try {
-            response = await this.client.get(url);
+            const response = await this.client.get(url);
+            // console.log(response.data);
+            if (response?.data?.includes("ApolloClient")) {
+                console.log(`The region '${region}' has a GraphQL endpoint!`);
+                throw new Error();
+            } else {
+                return cheerio.load(response.data);
+            }
         } catch (e) {
-            console.log(e)
+            // console.log(e);
             throw new Error("Title not found");
         }
-        return cheerio.load(response.data);
     };
 
-    fetchAll = async (titleId: string) => {
-        try {
-            if (this.region === REGION.US) {
-                // Query Nintendo's official GraphQL API
-                const {nsuid, locale} = await this.fetchNsuid(titleId);
-                const response = await this.query(`
+    chooseSource = async (titleId: string, region: REGION = this.region) => {
+        if (graphQLRegions.includes(region)) {
+            // Query Nintendo's official GraphQL API
+            const {nsuid, locale} = await this.fetchNsuid(titleId, region.toString());
+            const response = await this.query(`
                     query GetGameByNsuid($nsuid: String!, $locale: String) {
                         GetGameByNsuid(nsuid: $nsuid, locale: $locale) {
                             horizontalHeaderImage
@@ -135,25 +150,45 @@ export default class Fetcher {
                             galleryImages
                         }
                     }`,
-                    {nsuid, locale},
-                );
-                const game = response?.data?.data?.GetGameByNsuid;
-                return {
-                    horizontalHeaderImage: game?.horizontalHeaderImage,
-                    descriptionImage: game?.descriptionImage,
-                    boxart: game?.boxart,
-                    galleryImages: game?.galleryImages,
-                };
-            } else {
-                // Get the page's 'twitter:image' meta tag
-                const $ = await this.fetchHtml(titleId);
-                const horizontalHeaderImage = $("meta[property='og:image']").attr("content");
-                return {
-                    horizontalHeaderImage: horizontalHeaderImage,
-                };
+                {nsuid, locale},
+            );
+            const game = response?.data?.data?.GetGameByNsuid;
+            return {
+                horizontalHeaderImage: game?.horizontalHeaderImage,
+                descriptionImage: game?.descriptionImage,
+                boxart: game?.boxart,
+                galleryImages: game?.galleryImages,
+            };
+        } else {
+            // Get the page's 'twitter:image' meta tag
+            const $ = await this.fetchHtml(titleId, region.toString());
+            const horizontalHeaderImage = $("meta[property='og:image']").attr("content");
+            if (horizontalHeaderImage.includes("og_nintendo.png") || // nintendo's logo
+                horizontalHeaderImage.includes("2x1") // not 16:9
+            ) {
+                throw new Error("Not the correct image");
             }
+            return {
+                horizontalHeaderImage: horizontalHeaderImage,
+            };
+        }
+    };
+
+    fetchAll = async (titleId: string) => {
+        try {
+            // Try this region first
+            console.log("Trying this region");
+            return await this.chooseSource(titleId);
         } catch (e) {
-            console.error(e);
+            // Try all other regions
+            console.log("Trying all regions");
+            for (let regionKey in REGION) {
+                try {
+                    return await this.chooseSource(titleId, (<any>REGION)[regionKey]);
+                } catch (e) {
+                }
+            }
+            return cheerio.load("");
         }
     };
 

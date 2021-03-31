@@ -1,10 +1,11 @@
 {
-    "name": "eshop-image-fetcher",
+    "name": "@themezernx/eshop-image-fetcher",
     "version": "1.0.0",
     "module": "./dist/index.js",
     "repository": "https://github.com/ThemezerNX/eShop-Image-Fetcher.git",
     "author": "Migushthe2nd",
     "license": "MIT",
+    "private": false,
     "scripts": {
         "build": "tsc",
         "prepublishOnly": "yarn run build",

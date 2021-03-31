@@ -1,25 +1,14 @@
 {
-    "name": "eShop-Image-Scraper",
+    "name": "eshop-image-fetcher",
     "version": "1.0.0",
-    "main": "index.js",
-    "repository": "https://github.com/ThemezerNX/eShop-Image-Scraper.git",
+    "module": "./dist/index.js",
+    "repository": "https://github.com/ThemezerNX/eShop-Image-Fetcher.git",
     "author": "Migushthe2nd",
     "license": "MIT",
     "scripts": {
-        "start": "node ./index.test.js",
-        "dev": "nodemon",
-        "build": "tsc ./index.ts ./index.test.ts",
-        "postinstall": "tsc ./index.ts"
-    },
-    "nodemonConfig": {
-        "ignore": [
-            "**/*.test.ts",
-            "**/*.spec.ts",
-            ".git",
-            "node_modules"
-        ],
-        "exec": "yarn run build && yarn run start",
-        "ext": "ts"
+        "build": "tsc -p tsconfig.json",
+        "prepublishOnly": "yarn run build",
+        "publish": "yarn publish --access=public"
     },
     "dependencies": {
         "axios": "^0.21.0",
